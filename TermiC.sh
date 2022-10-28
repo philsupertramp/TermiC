@@ -30,10 +30,16 @@ inlineCounter=0
 promptPS1=">> "
 initSource="#include \"stdio.h\"\n#include \"stdlib.h\"\n${addInclude}int main() {"
 echo -e  $initSource > $sourceFile
+ex_err=""
 
 while true;do
-	[[ $inlineCounter -gt 0 ]] && promptPS1="   " || promptPS1=">> "
-	read -ep "$promptPS1"$(echo $(yes ... | head -n $inlineCounter) | sed 's/ //g') prompt
+  if [[ $ex_err == "" ]]; then
+         [[ $inlineCounter -gt 0 ]] && promptPS1="   " || promptPS1=">> "
+         read -rep "$promptPS1"$(echo $(yes ... | head -n $inlineCounter) | sed 's/ //g') prompt
+  else
+         read -rep "$promptPS1"$(echo $(yes ... | head -n $inlineCounter) | sed 's/ //g') -i "$prompt" prompt
+    ex_err=""
+  fi
 	[[ $prompt == "" ]] && continue
 	[[ $prompt == "exit" ]] && break
 	[[ $prompt == "clear" ]] && sourceFile=`mktemp termic-XXXXXXXX.$extension` && binaryFile=`basename $sourceFile .$extension` && fullPrompt="" && inlineCounter=0 && echo -e  $initSource > $sourceFile && continue
@@ -50,7 +56,8 @@ while true;do
 		\nsave: Saves source file to working directory\nsavebin: Saves binary file to working directory\
 		\nclear: Deletes all declared functions,classes etc. and resets shell\
 		\nexit: Deletes created temp files and exits program" && continue
-	fullPrompt=`echo -e "$fullPrompt\n$prompt" | sed '/^[[:blank:]]*$/d'`
+	fullPrompt=`echo -e "$fullPrompt\n"`
+  fullPrompt=`sed '/^[[:blank:]]*$/d' <(echo "$fullPrompt$prompt")`
 	inlineOpen=`echo $fullPrompt | grep -o { | wc -l`
 	inlineClose=`echo $fullPrompt | grep -o } | wc -l`
 	inlineCounter=$((inlineOpen-inlineClose))
@@ -71,23 +78,29 @@ while true;do
 		# If if/else if/else/switch/while/do while/for/try/catch
 		[[ $fullPrompt =~ ^.?[[:blank:]]*(if|else if|else|switch|while|do|for|try|catch).*\{ ]] && addOutsideMain=false && addToBegining=false && addSemicolon=""
 		if $addToBegining;then
-			echo "$fullPrompt"$addSemicolon > $sourceFile.tmp
-			echo "`cat $sourceFile`" >> $sourceFile.tmp
+			echo -E "$fullPrompt"$addSemicolon > $sourceFile.tmp
+			cat $sourceFile >> $sourceFile.tmp
 		elif $addOutsideMain;then
 			fullPrompt=`echo $fullPrompt`
 			sed "/^int main() {/i$fullPrompt$addSemicolon" $sourceFile > $sourceFile.tmp
 		else
 			cp $sourceFile $sourceFile.tmp
-			echo "$fullPrompt$addSemicolon" >> $sourceFile.tmp
+			echo -E "$fullPrompt$addSemicolon" >> $sourceFile.tmp
 		fi
 		fullPrompt=""
-		compiledSuccessfully=false
-		$compiler -w -x$lang <(echo "`cat $sourceFile.tmp`}") -o $binaryFile && compiledSuccessfully=true
+    closing="}"
+    ex_err=$( { $compiler -w -x$lang <(echo -E "`cat $sourceFile.tmp`}") -o $binaryFile; } 2>&1 )
+    if [[ $ex_err == "" ]]; then
+      ex_err=$(./$binaryFile 2>&1 > /dev/null)
+      if [[ $ex_err == "" ]]; then
+        echo "$(./$binaryFile)" && mv $sourceFile.tmp $sourceFile
+      else
+        echo -e "Execution error:\n$ex_err"
+      fi
+    else
+      echo -e "Compile Error:\n${ex_err[@]}"
+    fi
 
-		if $compiledSuccessfully;then
-			retval=`./$binaryFile 2>&1`
-			[[ $retval == "" ]] && mv $sourceFile.tmp $sourceFile || echo "$retval"
-		fi
 	fi
 done
 
